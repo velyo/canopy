@@ -20,3 +20,5 @@ let mutable autoPinBrowserRightOnLaunch = true
 let mutable throwIfMoreThanOneElement = false
 let mutable configuredFinders = finders.defaultFinders
 let mutable writeToSelectWithOptionValue = true
+let mutable tryToOptimizeFindersForPerformance = true
+let mutable skipTryingToFindElementsInIFramesForPerformance = true

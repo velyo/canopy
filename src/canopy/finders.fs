@@ -53,15 +53,32 @@ let findByValue value f =
         findByCss (sprintf "*[value='%s']" value) f |> List.ofSeq        
     with | _ -> []
 
+let mutable htmlElements = [ "html"; "body"; "ul"; "li"; "a "; "p "; "div"; "span"; "table"; "tr"; "td"; "thead"; "tbody"; "label"; "input"; "button"; "select"; "option"; "textarea" ] //using a(space) instead of a because I dont want to match any word starting with a
+
+let mutable selectorIsProbablyXpath = fun (selector : string) -> selector.StartsWith("/") || selector.Contains("id(") || selector.Contains("text()")
+let mutable selectorIsProbablyJQuery = fun (selector : string) -> not <| selectorIsProbablyXpath selector && selector.Contains(":") //:eq :contains etc
+let mutable selectorIsProbablyCSS = fun (selector : string) -> not <| selectorIsProbablyJQuery selector && (selector.StartsWith("#") || selector.StartsWith(".") || htmlElements |> List.exists (fun html -> selector.StartsWith(html)))
+let mutable selectorIsProbablyValue = fun (selector : string) -> not <| selectorIsProbablyCSS selector
+let mutable selectorIsProbablyLabel = fun (selector : string) -> not <| selectorIsProbablyCSS selector
+let mutable selectorIsProbablyText = fun (selector : string) -> not <| selectorIsProbablyCSS selector
+
 //you can use this as an example to how to extend canopy by creating your own set of finders, tweaking the current collection, or adding/removing
 let mutable defaultFinders = 
-    (fun cssSelector f ->
+    (fun cssSelector optimize f ->
         seq {
-            yield findByCss     cssSelector f
-            yield findByValue   cssSelector f
-            yield findByXpath   cssSelector f
-            yield findByLabel   cssSelector f
-            yield findByText    cssSelector f
-            yield findByJQuery  cssSelector f
+            if optimize then
+                if selectorIsProbablyCSS cssSelector then yield findByCss cssSelector f
+                if selectorIsProbablyValue cssSelector then yield findByValue cssSelector f
+                if selectorIsProbablyXpath cssSelector then yield findByXpath cssSelector f
+                if selectorIsProbablyLabel cssSelector then yield findByLabel cssSelector f
+                if selectorIsProbablyText cssSelector then yield findByText cssSelector f
+                if selectorIsProbablyJQuery cssSelector then yield findByJQuery cssSelector f
+            else
+                yield findByCss     cssSelector f
+                yield findByValue   cssSelector f
+                yield findByXpath   cssSelector f
+                yield findByLabel   cssSelector f
+                yield findByText    cssSelector f
+                yield findByJQuery  cssSelector f
         }
     )

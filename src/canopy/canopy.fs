@@ -192,7 +192,7 @@ let waitFor2 message (f : unit -> bool) =
 let waitFor = waitFor2 "Condition not met in given amount of time. If you want to increase the time, put compareTimeout <- 10.0 anywhere before a test to increase the timeout"
     
 //find related    
-let rec private findElements cssSelector (searchContext : ISearchContext) : IWebElement list =
+let rec private findElements cssSelector (searchContext : ISearchContext) counter : IWebElement list =
     searchedFor <- (cssSelector, browser.Url) :: searchedFor
     let findInIFrame () =
         let iframes = findByCss "iframe" searchContext.FindElements
@@ -204,16 +204,17 @@ let rec private findElements cssSelector (searchContext : ISearchContext) : IWeb
             iframes |> List.iter (fun frame -> 
                 browser.SwitchTo().Frame(frame) |> ignore
                 let root = browser.FindElement(By.CssSelector("html"))
-                webElements := findElements cssSelector root
-            )
+                webElements := findElements cssSelector root counter
+            )            
             !webElements
-
     try
-        let results =
-            configuredFinders cssSelector searchContext.FindElements        
+        let results =            
+            configuredFinders cssSelector (tryToOptimizeFindersForPerformance && counter <= 3) searchContext.FindElements        
             |> Seq.filter(fun list -> not(list.IsEmpty))
         if Seq.isEmpty results then
-            findInIFrame()
+            if skipTryingToFindElementsInIFramesForPerformance && counter = 1 then
+                []
+            else findInIFrame()
         else
            results |> Seq.head
     with | ex -> []
@@ -224,12 +225,14 @@ let private findByFunction cssSelector timeout waitFunc searchContext reliable =
     try
         if reliable then
             let elements = ref []
+            let counter = ref 0
             wait.Until(fun _ -> 
-                elements := waitFunc cssSelector searchContext
+                counter := !counter + 1
+                elements := waitFunc cssSelector searchContext !counter
                 not <| List.isEmpty !elements) |> ignore
             !elements
         else
-            wait.Until(fun _ -> waitFunc cssSelector searchContext)
+            wait.Until(fun _ -> waitFunc cssSelector searchContext 0)
     with
         | :? WebDriverTimeoutException ->   
             suggestOtherSelectors cssSelector
@@ -769,6 +772,6 @@ let coverage (url : 'a) =
 
 let addFinder finder =
     let currentFinders = configuredFinders
-    configuredFinders <- (fun cssSelector f ->
-        currentFinders cssSelector f
+    configuredFinders <- (fun cssSelector optimize f ->
+        currentFinders cssSelector optimize f
         |> Seq.append (seq { yield finder cssSelector f }))
