@@ -1,6 +1,7 @@
 module canopy.reporters
 
 open System
+open System.Net.Mail
 open OpenQA.Selenium
 open types
 
@@ -280,3 +281,131 @@ type LiveHtmlReporter(browser : BrowserStartMode, driverPath : string) =
 
         member this.skip () = 
             this.swallowedJS (sprintf "addToContext('%s', 'Skip', '%s', '%s');" context test "")
+
+type MailReporter() = 
+
+    let buffer = new System.Text.StringBuilder()
+    let details = new System.Text.StringBuilder()
+    let mutable hasErrors = false
+    let console = new ConsoleReporter() :> IReporter
+
+    let mutable mailReceiver = ""
+    let mutable mailSender = ""
+    let mutable mailSubject = ""
+    let mutable mailTemplate = "<html><body>{content}</body></html>"
+    let mutable reportErrorsOnly = true
+
+    let mail() =
+        buffer.Append(if details.Length > 0 then details.ToString() else "") |> ignore
+        let content = 
+            if String.IsNullOrWhiteSpace(mailTemplate) 
+                then buffer.ToString()
+                else mailTemplate.Replace("{content}", buffer.ToString()) 
+        use message = new MailMessage(mailSender, mailReceiver, mailSubject, content)
+        message.IsBodyHtml <- true
+        use client = new SmtpClient()
+        client.Send(message)
+
+    let report () =
+        let send = if reportErrorsOnly then (if hasErrors then true else false) else true
+        if send then mail()
+
+    // properties
+    // ////////////////////////////////////////////////////////////////////////////////////////////
+
+    member this.MailReceiver        with set (value) = mailReceiver     <- value
+    member this.MailSender          with set (value) = mailSender       <- value
+    member this.MailSubject         with set (value) = mailSubject      <- value
+    member htis.MailTemplate        with set (value) = mailTemplate     <- value
+    member this.ReportErrorsOnly    with set (value) = reportErrorsOnly <- value
+    member val ReportTitle : string     = null with get , set
+
+    // reporter interface
+    // ////////////////////////////////////////////////////////////////////////////////////////////
+
+    interface IReporter with
+
+        member this.pass() = 
+            console.pass()
+            buffer.Append("<span style='color: green'>passed</span>") |> ignore
+
+        member this.fail ex id ss = 
+            console.fail ex id ss
+            details
+                .Append("<div style='color: red; margin: 20px 0;'>") 
+                .Append("<b>Error:</b>")
+                .AppendFormat("<div>{0}</div>", ex.Message)
+                .Append("<b>Stack:</b>")
+                |> ignore
+            ex.StackTrace.Split([| "\r\n"; "\n" |], StringSplitOptions.None)
+            |> Array.iter (fun trace -> 
+                if trace.Contains(".FSharp.") || trace.Contains("canopy.core") || trace.Contains("OpenQA.Selenium") then
+                    details.AppendFormat("<div>{0}</div>", trace) |> ignore
+                else
+                    if trace.Contains(":line") then
+                        let beginning = trace.Split([| ":line" |], StringSplitOptions.None).[0]
+                        let line = trace.Split([| ":line" |], StringSplitOptions.None).[1]
+                        details.AppendFormat("<div>{0}: <span style='color: darkgreen;'>line{1}</span></div>", beginning, line) |> ignore
+                    else
+                        details.AppendFormat("<div>{0}</div>", trace) |> ignore
+                )
+            buffer.Append("<span style='color: red'>failed</span>") |> ignore
+            hasErrors <- true
+
+        member this.todo() = 
+            console.todo()
+            buffer.Append("<span style='color: gray; text-decoration: line-through;'>todo</span>") |> ignore
+
+        member this.skip() =
+            console.skip()
+            buffer.Append("<span style='color: gray'>skip</span>") |> ignore
+
+        member this.testStart id = 
+            console.testStart id
+            buffer.Append("<li>").Append(id).Append(" - ") |> ignore
+
+        member this.testEnd id = 
+            console.testEnd id
+            buffer.AppendFormat("</li>") |> ignore
+
+        member this.contextStart c = 
+            console.contextStart c
+            buffer.AppendFormat("<div><b>{0}</b></div><ol>", c).AppendLine() |> ignore
+
+        member this.contextEnd c = 
+            console.contextEnd c
+            buffer.Append("</ol>") |> ignore
+
+        member this.suiteBegin() =
+            console.suiteBegin()
+            if this.ReportTitle <> null then
+                buffer.AppendFormat("<h3>{0}</h3>", this.ReportTitle) |> ignore           
+
+        member this.suiteEnd() =  
+            console.suiteEnd()
+            report()
+
+        member this.summary minutes seconds passed failed = 
+            console.summary minutes seconds passed failed
+            buffer
+                .Append("<div><b>Summary:</b></div><ul>")
+                .AppendFormat("<li>{0} minutes {1} seconds to execute</li>", minutes, seconds)
+                .AppendFormat("<li style='color:green;'>{0} passed</li>", passed)
+                .AppendFormat("<li style='color:red;'>{0} failed</li>", failed)
+                .Append("</ul>")
+                |> ignore
+
+        member this.describe d = 
+            console.describe d
+
+        member this.write w =
+            console.write w
+
+        member this.suggestSelectors selector suggestions = 
+            console.suggestSelectors selector suggestions
+
+        member this.quit() =
+            console.quit()
+
+        member this.coverage url ss =
+            console.coverage url ss
